@@ -16,7 +16,7 @@ This file proves:
 (5) "Restricted to a domain" variants (on-distribution)
 -/
 
-import VAE.Spec
+import VAE
 
 open CategoryTheory
 open scoped BigOperators
