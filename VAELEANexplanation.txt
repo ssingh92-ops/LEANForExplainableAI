@@ -1,0 +1,274 @@
+VAE/Spec.lean — Support Notes (Plain Text)
+
+
+
+1. WHAT THIS FILE IS DOING
+--------------------------
+
+The file VAE/Spec.lean is a small semantic skeleton for VAEs and linear probes, written in Lean. It is meant to describe the “shape” and “specifications” of a system, not to implement training or optimization.
+
+It has two main layers.
+
+First, an abstract categorical layer:
+
+We work in an arbitrary category C. A VAE is represented by two morphisms enc : X ⟶ Z and dec : Z ⟶ X. The reconstruction morphism is recon : X ⟶ X defined as recon := dec ≫ enc. At this level there is no mention of probabilities, KL terms, losses, or neural nets. Only the compositional structure matters.
+
+Second, a concrete layer in Type:
+
+We specialize to the category of types and functions. X and Z become ordinary types. We assume that X is a (pseudo-)metric space, so dist : X → X → ℝ is available, and Z is a real normed vector space, like ℝᵈ with its usual structure. We then define approxId f ε to mean “f is ε-close to the identity on X”. We define a concrete VAE with enc : X → Z and dec : Z → X. We define a linear probe w : Z →L[ℝ] ℝ. Finally, we define ProbeSpec, a predicate that says a probe explains a client concept c : X → ℝ up to a uniform error δ.
+
+The file is not concerned with training at all. It provides a mathematical and logical description of VAEs and probes that can be connected to trained models implemented in Python or another language.
+
+
+
+2. ABSTRACT CATEGORICAL LAYER
+-----------------------------
+
+2.1 Category, universes, and morphisms
+
+At the top of the abstract part, the file has:
+
+universe u v
+
+variable {C : Type u} [Category.{v} C]
+
+Here is what this means.
+
+The line “universe u v” introduces two universe levels. Lean uses universes to avoid paradoxes and to manage “sizes” of types. You can think of Type u as a universe of objects (for example sets or spaces). Morphisms live in another universe level v, which is hidden inside Category.{v}.
+
+The declaration “{C : Type u}” says that C is a type. The elements of C are the objects of our category.
+
+The declaration “[Category.{v} C]” is a typeclass instance that provides the category structure on C. It tells Lean that for any X and Y in C, there is a type of morphisms Hom X Y, written X ⟶ Y. It tells Lean how to compose morphisms, written f ≫ g. It also includes proofs of the category axioms: associativity of composition, the existence of identity morphisms for each object, and the fact that identities behave as left and right units for composition.
+
+Because of “[Category C]”, we do not prove identity or associativity inside VAEcat. Those properties come from the existing category structure on C and are available as lemmas (for example Category.assoc, Category.id_comp, Category.comp_id) everywhere. In other words, the category laws are assumed globally for C. The VAEcat structure simply picks out specific morphisms from this already existing category and uses the laws that are already known for C.
+
+
+
+2.2 Categorical VAE interface
+
+The categorical VAE is defined as:
+
+structure VAEcat (X Z : C) :=
+  (enc : X ⟶ Z)
+  (dec : Z ⟶ X)
+
+This says that for any two objects X and Z in C, a value of type VAEcat X Z is a record with an encoder morphism enc : X ⟶ Z and a decoder morphism dec : Z ⟶ X.
+
+At this level, X and Z are just objects of C. We do not yet assume they are metric spaces, vector spaces, or anything like that. We do not talk about randomness, KL divergence, or losses. We only say “there is a morphism enc from X to Z and a morphism dec from Z back to X”.
+
+This structure can be instantiated in many categories. In the category of types and functions, enc and dec are plain functions. In a measure-theoretic category, they could be measurable maps. In other categories, they could be other kinds of morphisms. The point is that the category-theoretic layer gives an abstract interface to VAEs that is independent of concrete implementation details.
+
+
+
+2.3 Reconstruction and composition lemmas
+
+Inside the VAEcat namespace, we fix objects X and Z in C and a particular V : VAEcat X Z:
+
+variable {X Z : C} (V : VAEcat X Z)
+
+We then define the reconstruction morphism:
+
+def recon : X ⟶ X :=
+  V.dec ≫ V.enc
+
+This is the categorical analogue of the function x ↦ dec(enc(x)). The morphism recon is a morphism from X back to X. It composes enc and dec using the category’s composition operator “≫”. First you apply enc : X ⟶ Z, then dec : Z ⟶ X, giving a morphism X ⟶ X.
+
+We then have a definitional lemma:
+
+@[simp] lemma recon_def :
+    V.recon = V.dec ≫ V.enc := rfl
+
+This states that V.recon is definitionally equal to V.dec ≫ V.enc. The proof rfl (reflexivity) means “by unfolding the definition of recon, the left-hand side and right-hand side are the same”. The @[simp] attribute marks recon_def as a simplification rule, so the simp tactic can automatically replace V.recon with V.dec ≫ V.enc when simplifying expressions.
+
+Next are two composition lemmas, one for composing on the left and one for composing on the right:
+
+@[simp] lemma comp_recon_left {Y : C} (f : Y ⟶ X) :
+    f ≫ V.recon = f ≫ V.dec ≫ V.enc := by
+  simp [recon]
+
+This lemma says that for any object Y and morphism f : Y ⟶ X, if you compose f on the left with recon, you get
+
+f ≫ recon = f ≫ dec ≫ enc.
+
+Lean proves this by unfolding recon and using the category axioms (especially associativity) via the simp tactic.
+
+The corresponding lemma for composing on the right is:
+
+@[simp] lemma comp_recon_right {Y : C} (g : X ⟶ Y) :
+    V.recon ≫ g = V.dec ≫ V.enc ≫ g := by
+  simp [recon, Category.assoc]
+
+For any g : X ⟶ Y, composing recon on the right gives
+
+recon ≫ g = dec ≫ enc ≫ g.
+
+This uses the associativity lemma Category.assoc and the definition of recon. These lemmas are useful when you want to normalize expressions involving recon, enc, and dec so that reasoning and rewriting are easier.
+
+
+
+3. CONCRETE SPECIALIZATION IN TYPE
+----------------------------------
+
+After the abstract categorical part, the file specializes to a concrete situation where objects are types and morphisms are functions.
+
+We enter a section:
+
+section TypeConcrete
+
+open scoped BigOperators
+
+variable {X Z : Type}
+
+Now X and Z are ordinary types. You can think of X as an input space (for example images) and Z as a latent space (for example ℝᵈ).
+
+
+
+3.1 Metric structure on X
+
+We assume:
+
+variable [PseudoMetricSpace X]
+
+PseudoMetricSpace X is a mathlib typeclass that provides a distance function dist : X → X → ℝ, along with axioms such as dist x x = 0, symmetry (dist x y = dist y x), and the triangle inequality (dist x z ≤ dist x y + dist y z). It does not require that dist x y = 0 implies x = y. That would be a full MetricSpace. Here we allow zero distance between distinct points (a pseudo-metric).
+
+By assuming “[PseudoMetricSpace X]”, we can talk about the distance between inputs and define “closeness” of a reconstruction f x to x. This matches typical reconstruction losses in VAEs, which are often defined via some notion of distance between inputs (for example L2 distances on pixel arrays).
+
+
+
+3.2 Normed vector space structure on Z
+
+We assume:
+
+variable [NormedAddCommGroup Z] [NormedSpace ℝ Z]
+
+This means that Z is a real normed vector space. More explicitly, NormedAddCommGroup Z means Z is an abelian group under addition and there is a norm ‖·‖ : Z → ℝ satisfying the usual properties (non-negativity, triangle inequality, etc.). NormedSpace ℝ Z means Z is a vector space over ℝ and scalar multiplication and the norm are compatible in the usual way.
+
+Together, these assumptions match the usual implementation of latent spaces in VAEs, where latents are real vectors with a norm (for example standard Euclidean spaces ℝᵈ).
+
+
+
+3.3 approxId: “f is ε-close to identity”
+
+We define:
+
+def approxId (f : X → X) (ε : ℝ) : Prop :=
+  ∀ x : X, dist (f x) x ≤ ε
+
+The definition approxId f ε is a proposition that says: for every x in X, dist (f x) x ≤ ε. In words, f is ε-close to the identity map on X in a sup-norm sense: the maximum distance between f(x) and x over X is bounded by ε.
+
+In the VAE setting, a common choice of f would be the reconstruction function dec ∘ enc. Then approxId (dec ∘ enc) ε expresses that “reconstruction error is at most ε everywhere” (or on whatever domain you are considering).
+
+
+
+3.4 Concrete VAE as functions
+
+We define a concrete VAE as:
+
+structure VAE where
+  enc : X → Z
+  dec : Z → X
+
+Thus a value V : VAE X Z consists of a function enc : X → Z (the encoder) and a function dec : Z → X (the decoder).
+
+Inside the VAE namespace, we fix a particular V and define:
+
+variable (V : VAE X Z)
+
+def recon (x : X) : X :=
+  V.dec (V.enc x)
+
+Here recon is a function X → X. Given x : X, we compute V.enc x : Z, then decode with V.dec (V.enc x) : X, and return that. This is exactly the familiar reconstruction process in a VAE, just written in Lean as a pure function.
+
+This function is the concrete analogue of the categorical recon : X ⟶ X defined earlier, but now as an actual function between types.
+
+
+
+4. LINEAR PROBE AND EXPLAINABILITY SPEC
+---------------------------------------
+
+4.1 Linear Probe
+
+We define a Probe on the latent space Z:
+
+structure Probe where
+  w    : Z →L[ℝ] ℝ
+  name : String
+
+This structure represents a linear “concept probe” on the latent space. The field w : Z →L[ℝ] ℝ is a continuous linear map from Z to ℝ over the field ℝ. In machine learning terms, this is a linear probe: a learned weight vector that maps latent vectors to a scalar score. In a typical neural network implementation, it is analogous to a linear layer taking a latent vector and outputting a single real value.
+
+The field name : String is a human- or client-readable identifier for the concept we are probing, such as “thickness”, “slant”, “brightness”, “risk_score”, or another concept of interest.
+
+So a Probe Z is a pair: a linear functional w : Z → ℝ and a name describing what concept it is supposed to capture.
+
+
+
+4.2 ProbeSpec: formalizing “probe explains concept c”
+
+We define:
+
+structure ProbeSpec (V : VAE X Z) (p : Probe Z) (c : X → ℝ) :=
+  δ        : ℝ
+  δ_nonneg : 0 ≤ δ
+  approx   : ∀ x : X, |c x - p.w (V.enc x)| ≤ δ
+
+Here the parameters and fields have the following roles.
+
+The parameter V : VAE X Z is the concrete VAE whose encoder and decoder define the latent representation.
+
+The parameter p : Probe Z is a linear probe on the latent space Z. Its main component is w : Z →L[ℝ] ℝ, the linear map.
+
+The parameter c : X → ℝ is a client concept function on inputs X. For a given input x, c(x) is the “true” concept value: for example a thickness score, a slant angle, a risk rating, a quality score, or another concept that a client, domain expert, or human annotator cares about.
+
+The field δ : ℝ is the error budget. This is a real number that bounds how far the probe’s prediction can deviate from the true concept.
+
+The field δ_nonneg : 0 ≤ δ is a simple requirement that the error budget is non-negative.
+
+The field approx : ∀ x : X, |c x - p.w (V.enc x)| ≤ δ is the core approximation property. For every input x, it compares the true concept value c x with the probe’s prediction p.w (V.enc x), which is the probe applied to the latent encoding of x. It requires that the absolute difference |c x - p.w (V.enc x)| is at most δ for all x.
+
+In words, a value of type ProbeSpec V p c is a witness that the probe p, when applied to the latent representation produced by the encoder V.enc, approximates the concept function c with uniform error at most δ. This turns the informal idea “the concept is linearly decodable from the latent space” into a precise logical proposition.
+
+
+
+5. CONNECTION TO PYTORCH EXPERIMENTS
+------------------------------------
+
+Even though the Lean file does not perform any training, it is designed to connect naturally to experiments carried out in Python with PyTorch or similar frameworks.
+
+In a typical experiment, you might:
+
+Train a VAE on some dataset of inputs x in X (for example small images). After training, the encoder enc is implemented by a neural network. You then define one or more concept scores c(x) for each input. These concept scores can come from human labels, client-provided scores, or heuristics (for example counts of foreground pixels, various shape measures, or other derived quantities). You pass inputs x through the encoder to get latent representations z = enc(x). You then fit a linear model from z to c(x), for example using ridge regression or a learned linear layer. This gives you a weight vector or matrix that plays the role of w in the Probe structure.
+
+From the perspective of the definitions in VAE/Spec.lean:
+
+The VAE value V corresponds to the concrete VAE implementation; V.enc is the trained encoder and V.dec is the trained decoder.
+
+The Probe value p corresponds to a learned probe. Its w field is the linear map that predicts concept scores from latents, and its name field is the name of the concept you are probing.
+
+The function c is the concept function that maps each input x to its true concept value. This comes from labels, heuristics, or client information.
+
+An empirical error bound δ_emp, for example the maximum over your dataset of |c(x_i) − w(z_i)|, is a natural candidate for the δ field in a ProbeSpec. The inequality approx in ProbeSpec is then the logical idealization of the statement “for all x in our domain, the absolute difference between c x and p.w (V.enc x) is at most δ”.
+
+In this way, running a PyTorch experiment provides concrete data and weights that are witnesses for particular instances of ProbeSpec. The Lean file provides a precise language to talk about these properties and to derive additional consequences, such as how such specifications behave under composition of models.
+
+
+
+6. WHY THIS IS USEFUL FOR EXPLAINABLE AI AND CATEGORY THEORY
+------------------------------------------------------------
+
+The file VAE/Spec.lean is a minimal baseplate for combining category theory and explainable AI.
+
+First, it defines a simple categorical interface for a VAE (enc, dec, recon) in an arbitrary category C. This makes it possible to reason abstractly about the VAE as a pair of morphisms and their composition, without committing to specific implementation details.
+
+Second, it specializes to a concrete setting in Type where X has a pseudo-metric structure and Z is a real normed vector space. These assumptions match the way VAEs are usually implemented in practice and make it possible to talk about reconstruction error and linear structure on the latent space.
+
+Third, it introduces approxId to talk about approximate identity (good reconstruction), Probe to model linear probes on latent spaces, and ProbeSpec to formally capture the idea “this probe explains this concept up to error δ”.
+
+This setup enables several kinds of reasoning.
+
+It enables compositional reasoning. Because VAEcat sits in a general category C, you can compose VAEs with other morphisms and reason about the result using the category’s composition operation and the lemmas for recon. ProbeSpec provides a contract about how a concept is encoded and decoded via the model. Later, you can study how such contracts behave when models are composed.
+
+It provides architecture-agnostic semantics. The categorical level does not care what kind of neural network or architecture is used. Anything that presents the same interface (objects X and Z, and morphisms enc and dec) can be treated in the same framework. The same abstract definitions can be instantiated in different domains and categories.
+
+It creates a clean separation between implementation and specification. Training, KL divergence, optimization, and sampling are handled in the implementation (for example in PyTorch), while the logical and structural properties you want the model to satisfy (approxId, ProbeSpec, and later properties) live in the Lean side as precise propositions. This separation lets you reason about what conditions a model must satisfy to be considered “explainable” in a particular sense, independently of how it is trained.
+
+Finally, it serves as a foundation for further theory. Once the basic structures (VAEcat, VAE, Probe, ProbeSpec) are in place, you can extend them by proving lemmas about how error bounds behave, by adding invariance conditions (for example nuisance subspaces in Z that the probe should ignore), and by enriching the category-theoretic structure (functors, natural transformations, limits) to express more advanced properties. For now, VAE/Spec.lean is intentionally small and focused. It encodes the shape of a VAE and one simple but widely used explainability pattern: linear probes on latent representations explaining a concept function with a uniform error bound.
