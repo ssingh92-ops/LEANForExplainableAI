@@ -20,7 +20,7 @@ In Python we fit a linear probe and compute an **empirical δ̂**.
 
 ---
 
-## Lean side (your structure)
+## Lean side 
 
 ### Kernel
 - `VAE.lean`  
@@ -37,7 +37,7 @@ In Python we fit a linear probe and compute an **empirical δ̂**.
   - Neural Nets (arbitrary Y)
   - Explainability specs living on `rep : X → Z`
 
-### Optional splits (if you keep them)
+### Optional splits
 - `XAIExplainability.lean`  
   Aliases for `ProbeSpecRep` / `ProbeSpecRepOn`.
 - `XAIComposition.lean`  
