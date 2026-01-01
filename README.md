@@ -1,7 +1,7 @@
 # README.md
 # Lean ↔ Python: Explainable Representations (VAE / AE / Neural Nets)
 
-This repo (as we’ve been building it) is a **spec-first XAI stack**:
+This repo is a **spec-first XAI stack**:
 
 - **Lean**: defines *what it means* for a representation to “explain” a concept, and how those claims compose.
 - **Python**: trains models and produces **empirical witnesses** (linear probe fits + error metrics) that correspond to those Lean specs.
@@ -15,8 +15,8 @@ Most practical explainability (probes, linear separability, concept vectors) is 
 > A concept `c(x)` is explainable from a representation `rep(x)` if there exists a (linear) probe `w`
 > such that `w(rep(x))` approximates `c(x)` with bounded error.
 
-In Lean we encode that as `ProbeSpecRep` / `ProbeSpecRepOn`.  
-In Python we fit a linear probe and compute an **empirical δ̂**.
+In Lean encode that as `ProbeSpecRep` / `ProbeSpecRepOn`.  
+In Python fit a linear probe and compute an **empirical δ̂**.
 
 ---
 
